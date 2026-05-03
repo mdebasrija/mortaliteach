@@ -103,6 +103,44 @@ structure. Four groups are now visible:
 Smoking is the dominant signal. Obesity is secondary but 
 real — it creates the middle band that was unexplained.
 
-These four groups are the risk classes the decision tree 
-will formalise. They emerged from the data, not from 
-an actuary's prior assumption.
+### The four groups
+
+Breaking down by both smoking status and obesity (BMI >= 30):
+
+| Group                    | Mean charges | 
+|--------------------------|-------------|
+| Smoker + obese           | $41,558     |
+| Smoker + non-obese       | $21,363     |
+| Non-smoker + obese       | $8,843      |
+| Non-smoker + non-obese   | $7,977      |
+
+Two things stand out immediately:
+
+**Smoking dominates obesity.** A smoker with normal BMI 
+($21,363) costs more than twice a non-smoker who is obese 
+($8,843). The smoking effect overwhelms the BMI effect.
+
+**Obesity matters much more when combined with smoking.** 
+The obese/non-obese ratio among smokers is 1.95x ($41,558 
+vs $21,363). Among non-smokers it is only 1.11x ($8,843 vs 
+$7,977). Obesity and smoking interact - they are not 
+simply additive.
+
+These four groups map to risk classes as follows:
+
+- Non-smoker + non-obese  - Preferred Elite
+- Non-smoker + obese      - Preferred
+- Smoker + non-obese      - Substandard
+- Smoker + obese          - Substandard (higher loading)
+
+Smoking alone is disqualifying for Standard or better in 
+real underwriting. Both smoker groups sit in Substandard.
+The obesity factor makes the combined group more expensive 
+but does not change the classification tier — it changes 
+the premium multiplier within that tier.
+
+I can build a decision tree with this information, grouping subjects into further groups depending on whether this exploration missed any other factors.
+
+So, this mapping may be potentially revised 
+when the decision tree is fitted. The tree may suggest 
+different natural groupings.

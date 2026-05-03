@@ -357,8 +357,8 @@ display: none;
 </div>
 
 
-<div id="iteration-0-data-and-personas" class="section level2">
-<h2>Iteration 0 — Data and personas</h2>
+<div id="step-1---data-and-personas" class="section level2">
+<h2>Step 1 - Data and personas</h2>
 </div>
 <div id="why-this-project-exists" class="section level2">
 <h2>Why this project exists</h2>
@@ -450,10 +450,63 @@ Four groups are now visible:</p>
 </ul>
 <p>Smoking is the dominant signal. Obesity is secondary but real — it
 creates the middle band that was unexplained.</p>
-<p>These four groups are the risk classes the decision tree will
-formalise. They emerged from the data, not from an actuary’s prior
-assumption.</p>
 </div>
+</div>
+<div id="the-four-groups" class="section level3">
+<h3>The four groups</h3>
+<p>Breaking down by both smoking status and obesity (BMI &gt;= 30):</p>
+<table>
+<thead>
+<tr class="header">
+<th>Group</th>
+<th>Mean charges</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Smoker + obese</td>
+<td>$41,558</td>
+</tr>
+<tr class="even">
+<td>Smoker + non-obese</td>
+<td>$21,363</td>
+</tr>
+<tr class="odd">
+<td>Non-smoker + obese</td>
+<td>$8,843</td>
+</tr>
+<tr class="even">
+<td>Non-smoker + non-obese</td>
+<td>$7,977</td>
+</tr>
+</tbody>
+</table>
+<p>Two things stand out immediately:</p>
+<p><strong>Smoking dominates obesity.</strong> A smoker with normal BMI
+($21,363) costs more than twice a non-smoker who is obese ($8,843). The
+smoking effect overwhelms the BMI effect.</p>
+<p><strong>Obesity matters much more when combined with
+smoking.</strong> The obese/non-obese ratio among smokers is 1.95x
+($41,558 vs $21,363). Among non-smokers it is only 1.11x ($8,843 vs
+$7,977). Obesity and smoking interact - they are not simply
+additive.</p>
+<p>These four groups map to risk classes as follows:</p>
+<ul>
+<li>Non-smoker + non-obese - Preferred Elite</li>
+<li>Non-smoker + obese - Preferred</li>
+<li>Smoker + non-obese - Substandard</li>
+<li>Smoker + obese - Substandard (higher loading)</li>
+</ul>
+<p>Smoking alone is disqualifying for Standard or better in real
+underwriting. Both smoker groups sit in Substandard. The obesity factor
+makes the combined group more expensive but does not change the
+classification tier — it changes the premium multiplier within that
+tier.</p>
+<p>I can build a decision tree with this information, grouping subjects
+into further groups depending on whether this exploration missed any
+other factors.</p>
+<p>So, this mapping may be potentially revised when the decision tree is
+fitted. The tree may suggest different natural groupings.</p>
 </div>
 </div>
 
