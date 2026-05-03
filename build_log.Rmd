@@ -92,6 +92,7 @@ insurance$obese[insurance$bmi < 30] = "no"
 ggplot(data = insurance) + geom_point(aes(x = age, y = charges, colour = smoker, shape = obese), size = 2) +
   scale_color_brewer(palette = "Set1") + theme_minimal()
 ```
+
 Adding obesity (BMI >= 30) as shape resolves the remaining 
 structure. Four groups are now visible:
 
@@ -144,3 +145,99 @@ I can build a decision tree with this information, grouping subjects into furthe
 So, this mapping may be potentially revised 
 when the decision tree is fitted. The tree may suggest 
 different natural groupings.
+
+The first iteration of the decision tree is here - 
+
+```{r decisiontree}
+library(rpart)
+library(rpart.plot)
+
+insurance$smoker <- as.factor(insurance$smoker)
+insurance$sex    <- as.factor(insurance$sex)
+insurance$region <- as.factor(insurance$region)
+
+tree <- rpart(charges ~ age + bmi + smoker + sex + children + region,
+              data = insurance,
+              method = "anova")
+
+importance <- as.data.frame(tree$variable.importance)
+importance$variable <- rownames(importance)
+colnames(importance)[1] <- "importance"
+
+ggplot(importance, aes(x = reorder(variable, importance), 
+                       y = importance)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Variable importance in predicting charges",
+       x = NULL, y = "Importance") +
+  theme_minimal()
+```
+
+This shows that smoking status, BMI and age are the three main factors behind the split in charges. I did not add obese as a dichotomous variable since I wanted to see where the split naturally happens given the dataset. (Note for self: charges is a continuous outcome variable, so the method used was ANOVA.)
+
+```{r dt}
+printcp(tree)
+rpart.plot(tree, type = 4, extra = 101, roundint = FALSE)
+```
+
+Within non-smokers, age is more discriminating than obesity at this level of the tree. The younger non-smokers average $5,399, older ones $12,000. Within smokers, the dominant factor becomes obesity, with the premiums being higher than non-smokers all around, non-obese individuals averaging $21,000 and obese averaging $42,000.
+
+Another interesting thing is that the BMI categorisation for smokers does happen at the exact thresholds where obesity is defined. This serves as an extra sanity check as to whether the thresholds used earlier were correct given the dataset.
+
+#### Why sex, region, and children were not used
+
+Sex, region, and children are not predictive of charges 
+once smoking, age, and BMI are known. This is a finding, 
+not a data problem.
+
+In real insurance underwriting, sex does affect pricing 
+(women generally have lower mortality than men). The fact 
+that it does not appear here is likely because this is a 
+health insurance charges dataset, not a life insurance 
+mortality dataset. 
+
+
+The next thing to do now is to pick one representative persona for each of these groups. I decided to pick the individuals closest to the mean.
+
+
+```{r persona}
+insurance$leaf <- tree$where
+
+leaf_means <- aggregate(charges ~ leaf, data = insurance,
+                        FUN = mean)
+
+personas <- do.call(rbind, lapply(unique(insurance$leaf), function(l) {
+  group <- insurance[insurance$leaf == l, ]
+  leaf_mean <- leaf_means$charges[leaf_means$leaf == l]
+  closest <- which.min(abs(group$charges - leaf_mean))
+  group[closest, ]
+}))
+
+print(personas)
+```
+
+These individuals are real ones picked from the dataset, and reduces the amount of ambiguity in deciding what characteristics should be present in these personas when designed. 
+
+Since I am planning to make an app, I will assign names to these individuals.
+
+Now we give them names: (_wild Vampire Diaries reference appears_...)
+
+- Row 524: **Elena** - 38, female, non-smoker, obese. 
+  Preferred Elite despite high BMI because she does not smoke 
+  and is under 43. Pays $5,398.
+
+- Row 842: **Damon** - 59, male, non-smoker, normal BMI. 
+  Preferred as older age moves him out of Preferred Elite. 
+  Pays $12,324.
+
+- Row 161: **Caroline** - 42, female, smoker, normal BMI. 
+  Substandard. Smoking alone puts her here regardless of 
+  normal BMI. Pays $21,349.
+
+- Row 1091: **Niklaus** - 47, male, smoker, obese. 
+  Substandard high loading. Both risk factors present. 
+  Pays $41,676.
+
+These four people will appear in every act of the app. 
+Their numbers are real. Their names are not. Overall, the message here is that the premium order is driven almost entirely by smoking. This is not a biological truth, but is true for this dataset.
+
