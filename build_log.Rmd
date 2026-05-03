@@ -1,0 +1,108 @@
+---
+title: "MortaliTeach - build_log"
+author: "Debasrija"
+date: "2026-05-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+
+setwd("/home/ubunt/Downloads/mortaliteach/")
+insurance = read.csv("data/insurance.csv")
+```
+
+## Step 1 - Data and personas
+
+## Why this project exists
+
+Life and Health insurance pricing is built on this question: given 
+everything we know about a person, how likely are they to cost us 
+money? The Experience Study is the feedback loop that tells an 
+insurer whether their answer to that question was right.
+
+This project builds a tool that teaches that feedback loop from 
+first principles, from a single scatter plot to a renegotiated 
+reinsurance treaty, using real data and production-grade R engineering.
+
+## What this project teaches
+
+A person who completes this app will understand how insurance 
+premiums are derived from observed data, how a life insurance 
+pool works, what an Experience Study measures, why count A/E and 
+amount A/E can tell different stories, and why reinsurers exist.
+
+## Why this dataset specifically
+
+### What the data is
+
+1,338 real US health insurance records. Age, sex, BMI, smoking 
+status, number of children, region, and actual charges billed.
+
+Used to answer: what drives premium differences?
+
+### What I found
+
+- 1,338 rows, 7 columns, no missing values
+- Charges: min $1,122, median $9,382, mean $13,270, max $63,770
+- Right-skewed, so a small number of very expensive cases pull the mean up
+- Age range 18–64
+- Approximately equal male-female split, 662 female and 676 male
+
+### What causes the difference in premiums?
+
+One thing that affects premiums significantly is age. Premiums generally go up with age as they are considered higher risk in terms of both life and health.
+
+```{r scatter}
+
+ggplot(data = insurance) + geom_point(aes(x = age, y = charges)) + theme_minimal()
+```
+
+Interestingly - while the general trend of premiums going up holds, there are 3 bands, which means there is/are some other factor/factors behind the trend, not just age.
+
+#### Smoker split
+
+Based on background reading, I also knew that insurance premiums vary widely depending on whether the customer is a smoker or not, as it affects the mortality measures. So, I decided to start with that.
+
+- There are 274 (20.48%) smokers and 1064 non-smokers. No missing values.
+- Mean charges among smokers is $32050.23 and non-smokers is $8434.27, around 3.8x.
+
+Hence, 1,338 real insurance premiums show that smokers pay nearly 3.8 times the premium as compared to a non-smoker.
+
+
+#### Split by smoking status
+
+```{r scattersmoke}
+
+ggplot(data = insurance) + geom_point(aes(x = age, y = charges, colour = smoker)) +
+  scale_color_brewer(palette = "Set1") + theme_minimal()
+```
+The gap seems partially resolved. The top and bottom bands are composed entirely of smokers and non-smokers, but the middle band is a mixture. There may be other factors which have not been accounted for yet.
+
+#### Split by smoking and obesity status
+
+Another possible split might be BMI (obese/non-obese). Obesity and other comorbidities push premiums high up significantly as well.
+
+```{r scattersmokebmi}
+
+insurance$obese[insurance$bmi >= 30] = "yes"
+insurance$obese[insurance$bmi < 30] = "no"
+
+ggplot(data = insurance) + geom_point(aes(x = age, y = charges, colour = smoker, shape = obese), size = 2) +
+  scale_color_brewer(palette = "Set1") + theme_minimal()
+```
+Adding obesity (BMI >= 30) as shape resolves the remaining 
+structure. Four groups are now visible:
+
+- Smoker + obese: highest charges, wide spread
+- Smoker + non-obese: high charges, below obese smokers  
+- Non-smoker + obese: middle band
+- Non-smoker + non-obese: bottom band, tight and predictable
+
+Smoking is the dominant signal. Obesity is secondary but 
+real — it creates the middle band that was unexplained.
+
+These four groups are the risk classes the decision tree 
+will formalise. They emerged from the data, not from 
+an actuary's prior assumption.
