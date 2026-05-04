@@ -238,6 +238,59 @@ Now we give them names: (_wild Vampire Diaries reference appears_...)
   Substandard high loading. Both risk factors present. 
   Pays $41,676.
 
-These four people will appear in every act of the app. 
+These four people will appear in every section of the app. 
 Their numbers are real. Their names are not. Overall, the message here is that the premium order is driven almost entirely by smoking. This is not a biological truth, but is true for this dataset.
+
+Making a dataframe for these 4 individuals.
+
+```{r personadt}
+# VBT 2015 central death rates for the four personas
+# Source: SOA Valuation Basic Table 2015
+# mx = central death rate (deaths per person per year)
+
+personas_vbt <- data.frame(
+  name   = c("Elena", "Damon", "Caroline", "Niklaus"),
+  age    = c(38, 59, 42, 47),
+  sex    = c("female", "male", "female", "male"),
+  smoker = c("no", "no", "yes", "yes"),
+  bmi    = c(37.73, 24.70, 26.60, 36.19),
+  health_charges = c(5397.617, 12323.936, 21348.706, 41676.081),
+  risk_class = c("Preferred Elite", "Preferred", 
+                 "Substandard", "Substandard High"),
+  stringsAsFactors = FALSE
+)
+```
+
+ANB is used as the best approximation of age since it generally gives a more precise result. 
+
+From the 2015 VBT lookup table - we can get qx, and assuming uniform force of mortality, mx can be calculated. 
+
+```{r qx}
+personas_vbt$qx <- c(
+  0.00012, # Elena: F38NS
+  0.00378, # Damon: M59NS  
+  0.00045, # Caroline: F42S
+  0.00323 # Niklaus: M47S
+)
+
+personas_vbt$mx = -log(1 - personas_vbt$qx)
+
+print(personas_vbt)
+```
+
+
+Mortality vs charges ratio at similar ages should be consistent, in the same direction at least.
+```{r check}
+# mortality ratio: smoker vs non-smoker at similar ages
+cat("Caroline/Elena mortality ratio:", 
+    round(personas_vbt$mx[3] / personas_vbt$mx[1], 2), "x\n")
+
+cat("Health charges ratio (smoker/non-smoker):", 
+    round(21348 / 5397, 2), "x\n")
+```
+
+Smoker/non-smoker mortality ratio (3.75x) is consistent 
+with the health charges ratio from insurance data (3.96x). 
+This confirms the bridge between the two datasets - the 
+same variables that predict health costs predict mortality. 
 
