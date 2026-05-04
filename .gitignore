@@ -3,3 +3,4 @@
 .Rproj.user/
 *.Rproj
 data/insurance.csv
+data/insurance.xls
