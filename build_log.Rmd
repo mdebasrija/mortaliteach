@@ -55,7 +55,7 @@ Used to answer: what drives premium differences?
 One thing that affects premiums significantly is age. Premiums generally go up with age as they are considered higher risk in terms of both life and health.
 
 ```{r scatter}
-
+ggplot(data = insurance) + geom_density(aes(x = charges)) + theme_minimal()
 ggplot(data = insurance) + geom_point(aes(x = age, y = charges)) + theme_minimal()
 ```
 
@@ -134,11 +134,7 @@ These four groups map to risk classes as follows:
 - Smoker + non-obese      - Substandard
 - Smoker + obese          - Substandard (higher loading)
 
-Smoking alone is disqualifying for Standard or better in 
-real underwriting. Both smoker groups sit in Substandard.
-The obesity factor makes the combined group more expensive 
-but does not change the classification tier — it changes 
-the premium multiplier within that tier.
+Smoking alone is disqualifying for Standard or better in real underwriting. Both smoker groups sit in Substandard. The obesity factor makes the combined group more expensive but does not change the classification tier: it changes the premium multiplier within that tier.
 
 I can build a decision tree with this information, grouping subjects into further groups depending on whether this exploration missed any other factors.
 
@@ -186,15 +182,10 @@ Another interesting thing is that the BMI categorisation for smokers does happen
 
 #### Why sex, region, and children were not used
 
-Sex, region, and children are not predictive of charges 
-once smoking, age, and BMI are known. This is a finding, 
-not a data problem.
+Sex, region, and children are not predictive of charges once smoking, age, and BMI are known. This is a finding, not a data problem.
 
-In real insurance underwriting, sex does affect pricing 
-(women generally have lower mortality than men). The fact 
-that it does not appear here is likely because this is a 
-health insurance charges dataset, not a life insurance 
-mortality dataset. 
+In real insurance underwriting, sex does affect pricing (women generally have lower mortality than men). The fact that it does not appear here is likely because this is a
+health insurance charges dataset, not a life insurance mortality dataset. 
 
 
 The next thing to do now is to pick one representative persona for each of these groups. I decided to pick the individuals closest to the mean.
@@ -283,14 +274,132 @@ Mortality vs charges ratio at similar ages should be consistent, in the same dir
 ```{r check}
 # mortality ratio: smoker vs non-smoker at similar ages
 cat("Caroline/Elena mortality ratio:", 
-    round(personas_vbt$mx[3] / personas_vbt$mx[1], 2), "x\n")
+    round(personas_vbt$mx[3] / personas_vbt$mx[1], 2), "\n")
 
 cat("Health charges ratio (smoker/non-smoker):", 
-    round(21348 / 5397, 2), "x\n")
+    round(21348 / 5397, 2), "\n")
 ```
 
 Smoker/non-smoker mortality ratio (3.75x) is consistent 
 with the health charges ratio from insurance data (3.96x). 
 This confirms the bridge between the two datasets - the 
 same variables that predict health costs predict mortality. 
+
+### Why a GLM alongside the decision tree
+
+The decision tree showed us the risk classes visually. It is readable, intuitive, and derives groupings from data without any prior assumptions. But it has some weaknesses that make it unsuitable as a standalone model:
+
+1. Small changes in the data can change the splits entirely.
+2. The decision tree cannot adjust for factors like age and BMI between the smokers and non-smokers.
+3. Age splits at exactly 43, but the true relationship between age and charges is continuous so it is not explainable fully.
+4. No uncertainty estimates like standard errors, or confidence intervals.
+
+The GLM addresses all three. It models the continuous 
+relationship between each variable and charges, produces 
+standard errors on every coefficient, and is stable across 
+small data changes.
+
+### Why Gamma with log link
+
+Charges are strictly positive and right-skewed. A standard 
+linear regression (Gaussian GLM) would allow negative 
+predicted values, which is impossible for insurance charges. The 
+Gamma distribution respects the constraint that charges > 0 
+and matches the shape of the observed distribution.
+
+The log link models multiplicative effects. A smoker does 
+not pay a fixed dollar amount more than a non-smoker, they pay a multiple of what a non-smoker pays. The log link captures this correctly. It also means coefficients 
+are directly interpretable as multipliers when exponentiated:
+
+exp(coefficient) = charge multiplier for that variable
+
+### Fitting the GLM
+
+```{r glm}
+glm_model <- glm(charges ~ age + bmi + smoker + sex + 
+                             children + region,
+                 data = insurance,
+                 family = Gamma(link = "log"))
+
+summary(glm_model)
+```
+
+### Interpreting the coefficients
+
+```{r glmcoef}
+exp(coef(glm_model))
+```
+
+The exponentiated coefficients are charge multipliers:
+
+- `exp(intercept)` = baseline charge (female, non-smoker, 
+  age 0, BMI 0, no children, northeast region, not 
+  meaningful on its own but anchors the model)
+- `exp(smokeryes)` = how many times more a smoker pays 
+  vs a non-smoker, holding everything else constant
+- `exp(age)` = multiplier per additional year of age
+- `exp(bmi)` = multiplier per additional BMI unit
+
+### Observations
+
+The smoker multiplier is 4.48, higher than what was observed in the data. Hence, the GLM is controlling for confounding between smoking and other variables (age, BMI) that the raw comparison, or the decision tree did not account for, because they are not equipped to do it. Once those are controlled for, smoking is even more expensive than the raw ratio suggested.
+
+Age and BMI both have continuous significant effects (p < 0.001): 2.9% per year of age, 1.4% per BMI unit. The tree's age threshold of 43 was thus a computational convenience.
+
+Sex is not significant (p = 0.129) once other variables are controlled. However, it is known that men and women have significantly different mortalities. The absence 
+of sex here is dataset-specific as this is not mortality data.
+
+The GLM finds both children and region significant 
+(p < 0.001, 8.8% per dependent, southeast and 
+southwest significantly cheaper than northeast 
+(~13-14%, p < 0.01)) but the tree ignored 
+it entirely. This is not a contradiction.
+
+The tree optimises variance reduction at each split. Both children and region have too few unique values to provide any discriminatory ability. The tree found the single best question that separates high vs low cost at a particular node. The GLM finds the marginal effect of each variable controlling for all others.
+
+For my subsequent planned uses, the GLM is more usable because it uses 
+all variables simultaneously and produces defensible coefficients. 
+
+#### Predicted charges for our personas
+
+Once we have the GLM coefficients we can compute a 
+predicted charge for each persona directly from the 
+model.
+
+```{r glmpred}
+personas_vbt$predicted_charges <- predict(glm_model, 
+  newdata = data.frame(
+    age      = personas_vbt$age,
+    bmi      = personas_vbt$bmi,
+    smoker   = personas_vbt$smoker,
+    sex      = personas_vbt$sex,
+    children = 0,
+    region   = "northeast"
+  ), 
+  type = "response")
+
+
+personas_vbt$a_e_ratio = round(personas_vbt$health_charges/personas_vbt$predicted_charges, 3)
+
+personas_vbt
+```
+
+
+This predicted charge becomes the basis for 
+their life insurance premium in the next part planned: not the raw 
+observed charge, but the model's estimate of what 
+someone with their risk profile should cost. Three of the four individuals cost less than expected, but what is interesting is that both the women have a significantly low A to E ratio. 
+
+Elena is obese, a factor that the DT did not consider, and put her into Preferred Elite (notably, the BMI factor was decisive only in the smoking branch in the DT). The GLM looks at the obesity status and predicts a higher premium. 
+
+Caroline is a non-obese smoker. The GLM applies the full smoking multiplier (4.48x) which may overstate costs for a lighter smoker with otherwise normal health indicators.
+
+For both Damon and Niklaus, the predictions are off about 5% over and under actual charges respectively.
+
+
+## But the predictions were not accurate...
+
+The GLM's predictions are based on average effects across all 1,338 people. Individual variation around those predictions is expected and normal. The A/E ratios here (0.61 to 1.05) show the range of individual variation for typical representatives of each risk class. 
+
+In a real experience study, we would aggregate these individual A/E ratios across thousands of people. The individual noise averages out. What remains is the signal showing whether the risk class was priced correctly on average.
 
