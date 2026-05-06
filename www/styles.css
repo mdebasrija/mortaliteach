@@ -1,0 +1,59 @@
+/* styles.css */
+
+.scroll-container {
+  display: flex;
+  gap: 2rem;
+  align-items: flex-start;
+}
+
+.scroll-narrative {
+  flex: 1;
+  max-width: 420px;
+}
+
+.scroll-plot {
+  flex: 1;
+  position: sticky;
+  top: 80px;
+}
+
+.scroll-section {
+  min-height: 80vh;
+  padding: 2rem 0;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.scroll-section:last-child {
+  border-bottom: none;
+}
+
+.scroll-section h2 {
+  font-size: 1.4rem;
+  font-weight: 500;
+  margin-bottom: 1rem;
+  color: #2C2C2A;
+}
+
+.scroll-section p {
+  font-size: 1rem;
+  line-height: 1.7;
+  color: #444441;
+  margin-bottom: 0.8rem;
+}
+
+.scroll-section ul {
+  margin: 0.5rem 0 0.8rem 1.2rem;
+  line-height: 1.8;
+  color: #444441;
+}
+
+.nav-tabs {
+  border-bottom: 2px solid #378ADD;
+  margin-bottom: 1.5rem;
+}
+
+.nav-tabs .nav-link.active {
+  color: #378ADD;
+  border-bottom: 2px solid #378ADD;
+  font-weight: 500;
+}
