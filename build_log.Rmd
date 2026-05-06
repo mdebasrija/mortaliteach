@@ -954,7 +954,7 @@ whether the treaty was priced correctly - did the
 reinsurer receive enough premium to cover their 
 ceded claims?
 
-### reinsurance_split() — results
+### reinsurance_split() - results
 
 ```
 Total NAR:    $32.3 billion
@@ -972,11 +972,11 @@ By risk class (mean per policy):
 | Substandard | $223K | $347K | $569K |
 | Substandard High | $200K | $198K | $398K |
 
-Preferred Elite is almost entirely reinsured — mean 
+Preferred Elite is almost entirely reinsured - mean 
 ceded NAR of $7.8M per policy vs retention of $500K. 
 The reinsurer holds 94% of Preferred Elite risk.
 
-Preferred is mostly retained — mean face $295K is 
+Preferred is mostly retained - mean face $295K is 
 below the $500K retention limit for most policies.
 
 This confirms the teaching narrative: the insurer 
@@ -985,7 +985,7 @@ Preferred Elite death produces a claim of $8M+
 against $1,200 in annual premium. The reinsurer 
 exists to absorb this tail risk.
 
-### run_study() by risk class — results
+### run_study() by risk class - results
 
 Overall A/E: 1.192 (A = 3,801, E = 3,189)
 
@@ -999,7 +999,7 @@ Overall A/E: 1.192 (A = 3,801, E = 3,189)
 **Headline finding: Preferred Elite A/E = 2.834**
 
 Actual mortality was 183% above expected for the 
-lowest-risk group. CI entirely above 1.0 — 
+lowest-risk group. CI entirely above 1.0 - 
 statistically significant.
 
 Explanation: VBT non-smoker rates for young adults 
@@ -1007,10 +1007,10 @@ are calibrated on healthy insured lives. NHANES young
 non-smokers are general population including people 
 who would never qualify for insurance. The basis 
 mismatch is largest for the group with the lowest 
-absolute mortality rate — a small absolute difference 
+absolute mortality rate - a small absolute difference 
 produces a large A/E ratio when E is tiny.
 
-**Substandard and Substandard High CIs cross 1.0** — 
+**Substandard and Substandard High CIs cross 1.0** - 
 cannot reject A/E = 1.0 for smoker groups. The VBT 
 smoker rates, calibrated on a more general population, 
 are adequate for the NHANES smoker cohort.
@@ -1019,11 +1019,11 @@ are adequate for the NHANES smoker cohort.
 The treaty was priced assuming Preferred Elite was 
 the safest group. The experience study reveals it 
 has the worst A/E ratio. This is the basis mismatch 
-made visible — and the reason the reinsurer will 
+made visible - and the reason the reinsurer will 
 demand the highest multiplier increase at renewal 
 for the Preferred Elite group.
 
-### compute_repricing() — results
+### compute_repricing() - results
 
 Credibility-weighted repricing using full credibility 
 threshold of 1,082 deaths (Poisson, 95%/5% precision).
@@ -1035,18 +1035,18 @@ threshold of 1,082 deaths (Poisson, 95%/5% precision).
 | Substandard | 2.33x | 1.107 | 100% | 2.58x | +11% |
 | Substandard High | 3.25x | 1.203 | 62.5% | 3.66x | +13% |
 
-**Key insight — credibility dominates repricing:**
+**Key insight - credibility dominates repricing:**
 
 Preferred Elite has the worst A/E (2.834) but the 
 smallest price increase (+17%) because only 100 deaths 
-were observed — 9.2% credibility. The repricing is 
+were observed - 9.2% credibility. The repricing is 
 heavily pulled toward 1.0 by the low weight.
 
 Preferred has the largest price increase (+24%) despite 
 a lower A/E (1.238) because 1,470 deaths gives full 
 credibility. The experience fully drives the new price.
 
-This is not a bug — it is the credibility mechanism 
+This is not a bug - it is the credibility mechanism 
 working correctly. Acting on a 2.834 A/E from 100 
 deaths would be overreacting to noise. Waiting for 
 more Preferred Elite deaths before a large repricing 
@@ -1055,7 +1055,87 @@ is the actuarially correct response.
 **Teaching narrative:**
 At treaty renewal, the reinsurer presents this table. 
 The insurer expected Preferred Elite to be their 
-safest group — it has the worst A/E. But the small 
+safest group - it has the worst A/E. But the small 
 number of deaths limits how aggressively the reinsurer 
 can reprice. Both parties agree to monitor Preferred 
 Elite closely and revisit after the next study period.
+
+## Iteration 3 - Plain Shiny app
+
+### Scope
+
+Three-act scrollytelling app with interactive plotly
+visualisations. Built as plain shiny::runApp() before
+golem package conversion in Iteration 4.
+
+### File structure
+
+```
+R/
+  plots_act1.R   - 5 plotly functions, no Shiny
+  plots_act2.R   - 4 plotly functions, no Shiny
+  plots_act3.R   - 5 plotly functions, no Shiny
+  mod_act1.R     - Shiny module, scrollytelling
+  mod_act2.R     - Shiny module, scrollytelling
+  mod_act3.R     - Shiny module, scrollytelling
+app.R            - entry point
+www/scroll.js    - IntersectionObserver
+www/styles.css   - layout and typography
+```
+
+### Build order
+
+Plot functions built and tested at console before
+any Shiny code was written. Each function takes data
+and returns a plotly object - no Shiny dependency.
+This meant all 14 plot functions were verified correct
+before adding reactivity.
+
+### Scrollytelling implementation
+
+Left panel: narrative text with scroll-section divs
+each carrying a data-step attribute.
+
+Right panel: sticky plot that updates when a section
+enters the viewport.
+
+IntersectionObserver in scroll.js fires when a section
+crosses 50% of the viewport. Sends step number to Shiny
+via Shiny.setInputValue(). Module server receives
+input$scroll_step and switches the plot.
+
+### Startup performance
+
+NHANES data download and processing takes 3-5 minutes
+at cold start - too slow for shinyapps.io 60-second
+timeout on free tier.
+
+Fix: pre-compute cohort, exp_basis, study_rc, and
+repricing locally. Save as RDS files. app.R loads
+from RDS on startup - reduces cold start to under
+5 seconds.
+
+RDS files added to .gitignore - binary files, not
+version controlled. The pipeline code in analytics.R
+is the reproducible source of truth.
+
+### Deployment
+
+Deployed to shinyapps.io.
+URL: <https://j3y2wm-debasrija-mondal.shinyapps.io/mortaliteach/>
+
+### Act structure
+
+**Act 1 - What drives premiums?**
+7 scroll sections. Plots: scatter base, scatter by
+smoker, scatter four groups, variable importance,
+GLM coefficients, persona table.
+
+**Act 2 - How does insurance work?**
+5 scroll sections. Plots: premium formula, face amount
+comparison, pool NAR, single death impact, treaty split.
+
+**Act 3 - Did we price it right?**
+6 scroll sections. Plots: overall A/E gauge, A/E by
+risk class forest plot, count vs amount A/E, repricing
+table, treaty cashflow.
