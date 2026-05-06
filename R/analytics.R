@@ -21,7 +21,7 @@ library(data.table)
 validate_cohort <- function(df) {
   
   required <- c("seqn", "age_at_exam", "sex",
-                "vital_status", "follow_up_years", "smoker")
+                "vital_status", "follow_up_years", "smoker", "bmi")
   
   missing_cols <- setdiff(required, names(df))
   if (length(missing_cols) > 0) {
@@ -67,6 +67,13 @@ validate_cohort <- function(df) {
          paste(head(bad_smoker, 5), collapse = ", "))
   }
   
+  bad_bmi <- which(is.na(df$bmi) | 
+                     df$bmi < 10 | df$bmi > 80)
+  if (length(bad_bmi) > 0) {
+    stop("Impossible BMI values at rows: ",
+         paste(head(bad_bmi, 5), collapse = ", "))
+  }
+  
   invisible(df)
 }
 
@@ -100,45 +107,47 @@ validate_cohort <- function(df) {
     )
   }
   
-  load_wave <- function(demo_code, smq_code, mort_file) {
+  load_wave <- function(demo_code, smq_code, 
+                        bmx_code, mort_file) {
     
     demo <- nhanesA::nhanes(demo_code)
     smq  <- nhanesA::nhanes(smq_code)
+    bmx  <- nhanesA::nhanes(bmx_code)
     mort <- read_mort(mort_file)
     
-    demo <- demo[, c("SEQN", "RIDAGEYR", "RIAGENDR", "RIDSTATR")]
+    demo <- demo[, c("SEQN", "RIDAGEYR", 
+                     "RIAGENDR", "RIDSTATR")]
     smq  <- smq[,  c("SEQN", "SMQ020")]
-    mort <- mort[, c("seqn", "eligstat", "mortstat", "permth_exm")]
+    bmx  <- bmx[,  c("SEQN", "BMXBMI")]
+    mort <- mort[, c("seqn", "eligstat", 
+                     "mortstat", "permth_exm")]
     
-    names(demo) <- c("seqn", "age_at_exam", "sex", "ridstatr")
+    names(demo) <- c("seqn", "age_at_exam", 
+                     "sex", "ridstatr")
     names(smq)  <- c("seqn", "smoker")
+    names(bmx)  <- c("seqn", "bmi")
     
     df <- merge(demo, smq,  by = "seqn", all.x = TRUE)
+    df <- merge(df,   bmx,  by = "seqn", all.x = TRUE)
     df <- merge(df,   mort, by = "seqn", all.x = TRUE)
     
-    # keep only examined participants
     df <- df[
       df$ridstatr == "Both Interviewed and MEC examined", ]
-    
-    # keep only eligible for mortality follow-up
     df <- df[!is.na(df$eligstat) & df$eligstat == 1, ]
-    
-    # drop unknown vital status
     df <- df[!is.na(df$mortstat), ]
-    
-    # adults only
-    df <- df[df$age_at_exam >= 18 & df$age_at_exam <= 85, ]
-    
-    # known smoking status only — drop refused and don't know
+    df <- df[df$age_at_exam >= 18 & 
+               df$age_at_exam <= 85, ]
     df <- df[
-      !is.na(df$smoker) & df$smoker %in% c("Yes", "No"), ]
+      !is.na(df$smoker) & 
+        df$smoker %in% c("Yes", "No"), ]
     
-    # recode to internal values
+    # drop missing BMI — 1.5% in wave 1, similar in others
+    df <- df[!is.na(df$bmi), ]
+    
     df$sex    <- as.character(df$sex)
     df$smoker <- ifelse(df$smoker == "Yes",
                         "smoker", "non_smoker")
     
-    # follow-up in years
     df$follow_up_years <- df$permth_exm / 12
     df <- df[df$follow_up_years > 0, ]
     
@@ -147,6 +156,7 @@ validate_cohort <- function(df) {
       age_at_exam     = as.integer(df$age_at_exam),
       sex             = df$sex,
       smoker          = df$smoker,
+      bmi             = df$bmi,
       vital_status    = as.integer(df$mortstat),
       follow_up_years = df$follow_up_years,
       stringsAsFactors = FALSE
@@ -154,15 +164,15 @@ validate_cohort <- function(df) {
   }
   
   wave1 <- load_wave(
-    "DEMO",   "SMQ",
+    "DEMO",   "SMQ",   "BMX",
     "NHANES_1999_2000_MORT_2019_PUBLIC.dat")
   
   wave2 <- load_wave(
-    "DEMO_B", "SMQ_B",
+    "DEMO_B", "SMQ_B", "BMX_B",
     "NHANES_2001_2002_MORT_2019_PUBLIC.dat")
   
   wave3 <- load_wave(
-    "DEMO_C", "SMQ_C",
+    "DEMO_C", "SMQ_C", "BMX_C",
     "NHANES_2003_2004_MORT_2019_PUBLIC.dat")
   
   rbind(wave1, wave2, wave3)
