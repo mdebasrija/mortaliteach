@@ -301,3 +301,128 @@ build_exposure <- function(cohort) {
     dplyr::select(seqn, age, sex, smoker,
                   exposure_yrs, died)
 }
+
+
+# attach basis
+# Joins VBT 2015 central death rates to exposure frame.
+# Adds two columns:
+#   ref_rate    — mx from VBT 2015 for this age/sex/smoker
+#   expected    — exposure_yrs * ref_rate
+#
+# Hard stop if any ref_rate is NA after join —
+# silent NA would corrupt every downstream A/E ratio.
+
+attach_basis <- function(exposure_df,
+                         basis_path = "data/vbt_2015.csv") {
+  
+  basis <- read.csv(basis_path, stringsAsFactors = FALSE)
+  
+  basis_dt <- data.table::as.data.table(
+    basis[, c("age", "sex", "smoker", "mx")]
+  )
+  data.table::setnames(basis_dt, "mx", "ref_rate")
+  data.table::setkeyv(basis_dt, c("age", "sex", "smoker"))
+  
+  exp_dt <- data.table::as.data.table(exposure_df)
+  data.table::setkeyv(exp_dt, c("age", "sex", "smoker"))
+  
+  result <- basis_dt[exp_dt]
+  
+  na_count <- sum(is.na(result$ref_rate))
+  if (na_count > 0) {
+    stop(
+      "attach_basis(): ", na_count,
+      " rows have NA ref_rate after join. ",
+      "Check age/sex/smoker values are in VBT table."
+    )
+  }
+  
+  result[, expected := exposure_yrs * ref_rate]
+  
+  as.data.frame(result)
+}
+
+
+# run study
+# Aggregates exposure frame to A/E by group.
+# Returns S3 object of class experience_study.
+#
+# Byar CI is the standard actuarial confidence interval
+# for Poisson-distributed death counts.
+# reliable flag: TRUE when A >= 5 (minimum for credible CI)
+
+.byar_ci <- function(A, E, conf = 0.95) {
+  z <- qnorm(1 - (1 - conf) / 2)
+  
+  ci_lo <- ifelse(
+    A == 0,
+    0,
+    (A / E) * (1 - 1/(9*A) - z/sqrt(A))^3
+  )
+  
+  ci_hi <- ifelse(
+    A == 0,
+    -log(1 - conf) / E,
+    (A / E) * (1 - 1/(9*(A+1)) + z/sqrt(A+1))^3
+  )
+  
+  list(ci_lo = ci_lo, ci_hi = ci_hi)
+}
+
+run_study <- function(exp_basis,
+                      group_by = c("sex", "smoker")) {
+  
+  dt <- data.table::as.data.table(exp_basis)
+  
+  result <- dt[,
+               .(
+                 A            = sum(died),
+                 E            = sum(expected),
+                 exposure_yrs = sum(exposure_yrs)
+               ),
+               by = group_by
+  ]
+  
+  result[, ae := A / E]
+  
+  ci <- .byar_ci(result$A, result$E)
+  result[, ci_lo    := ci$ci_lo]
+  result[, ci_hi    := ci$ci_hi]
+  result[, reliable := A >= 5L]
+  
+  result[, ae    := round(ae,    3)]
+  result[, ci_lo := round(ci_lo, 3)]
+  result[, ci_hi := round(ci_hi, 3)]
+  
+  structure(
+    list(
+      results  = as.data.frame(result),
+      group_by = group_by,
+      A_total  = sum(result$A),
+      E_total  = sum(result$E),
+      ae_total = round(sum(result$A) / sum(result$E), 3)
+    ),
+    class = "experience_study"
+  )
+}
+
+# S3 methods
+
+print.experience_study <- function(x, ...) {
+  cat("Experience study\n")
+  cat("Grouped by:", paste(x$group_by, collapse = ", "), "\n")
+  cat("Overall A/E:", x$ae_total,
+      "(A =", x$A_total, "E =", round(x$E_total, 1), ")\n\n")
+  print(x$results)
+  invisible(x)
+}
+
+summary.experience_study <- function(object, ...) {
+  cat("Overall A/E:", object$ae_total, "\n")
+  cat("Total actual deaths:  ", object$A_total, "\n")
+  cat("Total expected deaths:", round(object$E_total, 1), "\n")
+  cat("Reliable groups:",
+      sum(object$results$reliable), "/",
+      nrow(object$results), "\n")
+  invisible(object)
+}
