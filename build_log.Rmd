@@ -693,14 +693,14 @@ Four groups, all reliable (A >= 5):
 | Male non-smoker | 654 | 495 | 1.321 | 1.039–1.647 |
 | Male smoker | 1556 | 1286 | 1.210 | 1.038–1.399 |
 
-Three of four CIs entirely above 1.0 — overmortality 
+Three of four CIs entirely above 1.0 - overmortality 
 is statistically significant, not noise.
 
-Female smoker CI crosses 1.0 — cannot reject null 
+Female smoker CI crosses 1.0 - cannot reject null 
 hypothesis of A/E = 1.0 for this group at 95% confidence.
 
 Non-smoker A/E consistently higher than smoker A/E 
-in both sexes — confirms select population effect. 
+in both sexes - confirms select population effect. 
 VBT non-smoker rates calibrated on healthier insured 
 lives; NHANES non-smokers are general population.
 
@@ -708,26 +708,26 @@ lives; NHANES non-smokers are general population.
 The treaty was priced using VBT 2015 rates. Actual 
 mortality was 23% above expected overall. The Byar 
 CIs confirm this is a real signal. At treaty renewal, 
-the reinsurer will argue for higher multipliers — 
+the reinsurer will argue for higher multipliers - 
 especially for non-smoker groups where the basis 
 mismatch is largest.
 
 
-## Iteration 2 — Financial layer
+## Iteration 2 - Financial layer
 
 ### Scope
 
 Functions to build:
-- `assign_risk_class()` — underwriting rules → risk class
-- `assign_financials()` — face amount, premium, NAR
-- `reinsurance_split()` — retained vs ceded by policy
-- `compute_repricing()` — new multipliers from A/E results
+- `assign_risk_class()` - underwriting rules → risk class
+- `assign_financials()` - face amount, premium, NAR
+- `reinsurance_split()` - retained vs ceded by policy
+- `compute_repricing()` - new multipliers from A/E results
 
 ### Adding BMI to the cohort
 
 The four-class risk system from Iteration 0 requires BMI
 to split smokers into Substandard and Substandard High.
-BMI is not in the mortality linkage file — it comes from
+BMI is not in the mortality linkage file - it comes from
 the NHANES body measurements component (BMX table).
 
 Added to `.load_nhanes()`:
@@ -735,10 +735,10 @@ Added to `.load_nhanes()`:
 - Wave 2: `BMX_B` → `BMXBMI`
 - Wave 3: `BMX_C` → `BMXBMI`
 
-**Missingness check — wave 1 after existing filters:**
+**Missingness check - wave 1 after existing filters:**
 - 4,435 adults with known smoking status
 - 68 missing BMI (1.5%)
-- Decision: exclude. No imputation — 1.5% loss is
+- Decision: exclude. No imputation - 1.5% loss is
   acceptable and imputing BMI for risk classification
   would introduce assumption-dependent risk classes.
 
@@ -753,7 +753,7 @@ Added BMI validation to `validate_cohort()`:
 - Values must be between 10 and 80
 - No NAs permitted
 
-### assign_risk_class() — design
+### assign_risk_class() - design
 
 Rules derived from the Iteration 0 decision tree.
 The tree found: smoking first, then age for non-smokers,
@@ -775,7 +775,7 @@ rounded to practical values.
   non-smokers. Older non-smokers cost 1.25x more
   on average based on the leaf means from the tree
   ($12,300 vs $5,399 = 2.28x health charges, but
-  mortality ratio is smaller — 1.25x reflects the
+  mortality ratio is smaller - 1.25x reflects the
   VBT age gradient not the health charge gradient).
 - Substandard to Preferred Elite: smoker non-obese
   vs young non-smoker. mx ratio from VBT confirms
@@ -791,7 +791,7 @@ table(cohort$risk_class)
 
 ### What the risk class distribution shows
 
-[fill in after running — paste table(cohort$risk_class) output]
+[fill in after running - paste table(cohort$risk_class) output]
 
 ### Connection to personas
 
@@ -826,3 +826,236 @@ Preferred Elite is the smallest non-Substandard group
 Spot checks confirmed:
 - Non-smoker age 38 - Preferred Elite 
 - Smoker age 47, BMI >= 30 - Substandard High 
+
+
+### assign_financials() - design
+
+Premium formula:
+
+```
+annual_premium = $1,200 (fixed budget for all participants)
+face_amount    = 1200 / (mx × multiplier × 1.15)
+NAR            = face_amount
+```
+
+The fixed budget approach makes the Preferred Elite 
+insight concrete - the same $1,200 buys vastly more 
+cover for low-risk lives because their mx is low.
+
+NAR is simplified to face amount. A real insurer would 
+subtract the policy reserve from face amount to get 
+true net amount at risk. We use face amount directly 
+as a teaching simplification - documented here so it 
+is not mistaken for a production implementation.
+
+Expense loading of 1.15 covers admin costs and profit 
+margin (15%).
+
+### assign_financials() - results
+
+```{r financials}
+aggregate(face_amount ~ risk_class,
+          data = cohort,
+          FUN  = function(x) round(mean(x)))
+```
+
+| Risk class | Mean face amount |
+|---|---|
+| Preferred Elite | $8,303,017 |
+| Preferred | $295,125 |
+| Substandard | $569,447 |
+| Substandard High | $398,497 |
+
+Preferred Elite buys 28x more cover than Preferred 
+for the same $1,200 annual budget. This is the central 
+teaching insight of Act 2 - the same premium buys 
+vastly different cover depending on mortality risk.
+
+### Face amount inversion - Substandard vs Substandard High
+
+Observed: mean face amount for Substandard ($569,447) 
+is higher than Substandard High ($398,497) despite 
+Substandard High having a higher multiplier (3.25x vs 
+2.33x).
+
+Investigation:
+- Mean age nearly identical: 51.4 vs 51.0 years
+- Mean mx: Substandard 0.01578, Substandard High 0.01144
+
+Root cause: the VBT 2015 smoker rates do not distinguish 
+by BMI. A smoker with BMI 25 and a smoker with BMI 35 
+get the same mx at the same age and sex. The BMI split 
+creates two groups from the same rate table - the mx 
+difference between them reflects only small age 
+distribution differences within each class.
+
+The multiplier difference (2.33x vs 3.25x) between 
+Substandard and Substandard High is derived from 
+health insurance charges data (Iteration 0), not from 
+VBT mortality data. Health charges show obese smokers 
+cost materially more than non-obese smokers ($41,558 
+vs $21,363). The VBT does not reflect this distinction.
+
+**Decision: keep four classes and document the mismatch.**
+
+This surfaces a real tension in insurance pricing:
+- Health charges data: BMI materially affects cost 
+  for smokers
+- VBT mortality data: BMI does not affect mortality 
+  for smokers in the published table
+
+Underwriting in practice uses multiple data sources. 
+The four-class system reflects health cost evidence 
+even where mortality evidence is absent. This is a 
+documented assumption, not a data error.
+
+**Teaching moment for Act 3:** The experience study 
+will show whether Substandard High actually has worse 
+mortality than Substandard in the NHANES cohort - 
+real data test of the assumption.
+
+### reinsurance_split() - design
+
+The insurer retains the first $500,000 of each policy. 
+Anything above is ceded to the reinsurer.
+
+```
+retained_nar    = min(nar, 500,000)
+ceded_nar       = max(nar - 500,000, 0)
+cession_rate    = ceded_nar / nar
+retained_premium = annual_premium × (1 - cession_rate)
+ceded_premium   = annual_premium × cession_rate
+treaty_premium  = ceded_nar × mx × multiplier × 1.10
+```
+
+Treaty loading of 1.10 - the reinsurer charges 10% 
+loading on the ceded risk. Lower than the direct 
+insurer's 15% loading because the reinsurer has lower 
+expense base and diversifies across many cedants.
+
+The retention limit of $500,000 is typical for a 
+small-medium insurer. Preferred Elite policies 
+(mean face $8.3M) will cede most of their NAR. 
+Preferred policies (mean face $295K) will retain 
+everything below $500K - most are fully retained.
+
+**Why reinsurance exists - the teaching narrative:**
+
+The Preferred Elite policies buy enormous face amounts 
+($8-20M range) for $1,200/year because their mortality 
+is very low. But if one of those lives dies, the claim 
+is $8-20M. A single death in that group could bankrupt 
+a small insurer.
+
+The reinsurer absorbs the tail risk above $500K per 
+policy. The insurer pays a treaty premium for this 
+protection. The experience study in Act 3 will show 
+whether the treaty was priced correctly - did the 
+reinsurer receive enough premium to cover their 
+ceded claims?
+
+### reinsurance_split() — results
+
+```
+Total NAR:    $32.3 billion
+Retained NAR:  $4.0 billion (12.4%)
+Ceded NAR:    $28.3 billion (87.6%)
+Mean cession:  34.1% per policy
+```
+
+By risk class (mean per policy):
+
+| Risk class | Retained | Ceded | Total NAR |
+|---|---|---|---|
+| Preferred Elite | $500K | $7,803K | $8,303K |
+| Preferred | $239K | $56K | $295K |
+| Substandard | $223K | $347K | $569K |
+| Substandard High | $200K | $198K | $398K |
+
+Preferred Elite is almost entirely reinsured — mean 
+ceded NAR of $7.8M per policy vs retention of $500K. 
+The reinsurer holds 94% of Preferred Elite risk.
+
+Preferred is mostly retained — mean face $295K is 
+below the $500K retention limit for most policies.
+
+This confirms the teaching narrative: the insurer 
+cannot hold Preferred Elite risk alone. A single 
+Preferred Elite death produces a claim of $8M+ 
+against $1,200 in annual premium. The reinsurer 
+exists to absorb this tail risk.
+
+### run_study() by risk class — results
+
+Overall A/E: 1.192 (A = 3,801, E = 3,189)
+
+| Risk class | A | E | A/E | 95% CI | Reliable |
+|---|---|---|---|---|---|
+| Preferred Elite | 100 | 35 | 2.834 | 1.467–4.824 | Yes |
+| Preferred | 1,470 | 1,187 | 1.238 | 1.057–1.437 | Yes |
+| Substandard | 1,555 | 1,405 | 1.107 | 0.950–1.280 | Yes |
+| Substandard High | 676 | 562 | 1.203 | 0.950–1.495 | Yes |
+
+**Headline finding: Preferred Elite A/E = 2.834**
+
+Actual mortality was 183% above expected for the 
+lowest-risk group. CI entirely above 1.0 — 
+statistically significant.
+
+Explanation: VBT non-smoker rates for young adults 
+are calibrated on healthy insured lives. NHANES young 
+non-smokers are general population including people 
+who would never qualify for insurance. The basis 
+mismatch is largest for the group with the lowest 
+absolute mortality rate — a small absolute difference 
+produces a large A/E ratio when E is tiny.
+
+**Substandard and Substandard High CIs cross 1.0** — 
+cannot reject A/E = 1.0 for smoker groups. The VBT 
+smoker rates, calibrated on a more general population, 
+are adequate for the NHANES smoker cohort.
+
+**Teaching narrative for Act 3:**
+The treaty was priced assuming Preferred Elite was 
+the safest group. The experience study reveals it 
+has the worst A/E ratio. This is the basis mismatch 
+made visible — and the reason the reinsurer will 
+demand the highest multiplier increase at renewal 
+for the Preferred Elite group.
+
+### compute_repricing() — results
+
+Credibility-weighted repricing using full credibility 
+threshold of 1,082 deaths (Poisson, 95%/5% precision).
+
+| Risk class | Old mult | A/E | Credibility | New mult | Change |
+|---|---|---|---|---|---|
+| Preferred Elite | 1.00x | 2.834 | 9.2% | 1.17x | +17% |
+| Preferred | 1.25x | 1.238 | 100% | 1.55x | +24% |
+| Substandard | 2.33x | 1.107 | 100% | 2.58x | +11% |
+| Substandard High | 3.25x | 1.203 | 62.5% | 3.66x | +13% |
+
+**Key insight — credibility dominates repricing:**
+
+Preferred Elite has the worst A/E (2.834) but the 
+smallest price increase (+17%) because only 100 deaths 
+were observed — 9.2% credibility. The repricing is 
+heavily pulled toward 1.0 by the low weight.
+
+Preferred has the largest price increase (+24%) despite 
+a lower A/E (1.238) because 1,470 deaths gives full 
+credibility. The experience fully drives the new price.
+
+This is not a bug — it is the credibility mechanism 
+working correctly. Acting on a 2.834 A/E from 100 
+deaths would be overreacting to noise. Waiting for 
+more Preferred Elite deaths before a large repricing 
+is the actuarially correct response.
+
+**Teaching narrative:**
+At treaty renewal, the reinsurer presents this table. 
+The insurer expected Preferred Elite to be their 
+safest group — it has the worst A/E. But the small 
+number of deaths limits how aggressively the reinsurer 
+can reprice. Both parties agree to monitor Preferred 
+Elite closely and revisit after the next study period.

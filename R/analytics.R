@@ -323,7 +323,20 @@ build_exposure <- function(cohort) {
 # silent NA would corrupt every downstream A/E ratio.
 
 attach_basis <- function(exposure_df,
+                         cohort    = NULL,
                          basis_path = "data/vbt_2015.csv") {
+  
+  # join financial columns from cohort if provided
+  if (!is.null(cohort)) {
+    exposure_df <- merge(
+      exposure_df,
+      cohort[, c("seqn", "risk_class", "multiplier",
+                 "face_amount", "nar",
+                 "retained_nar", "ceded_nar")],
+      by    = "seqn",
+      all.x = TRUE
+    )
+  }
   
   basis <- read.csv(basis_path, stringsAsFactors = FALSE)
   
@@ -478,4 +491,143 @@ assign_risk_class <- function(cohort) {
   cohort$multiplier <- multipliers[cohort$risk_class]
   
   cohort
+}
+
+# assign financials
+# Computes face amount, annual premium, and NAR.
+#
+# Premium basis:
+#   Fixed annual budget: $1,200 per participant
+#   face_amount = budget / (mx × multiplier × expense_loading)
+#   expense_loading = 1.15 (15% for admin and profit)
+#
+# NAR = face_amount (simplified — no reserve offset)
+# A real insurer would subtract the policy reserve from
+# face amount to get net amount at risk. We use face
+# amount directly as a teaching simplification.
+
+assign_financials <- function(cohort,
+                              budget  = 1200,
+                              loading = 1.15) {
+  
+  vbt <- read.csv("data/vbt_2015.csv",
+                  stringsAsFactors = FALSE)
+  
+  names(vbt)[names(vbt) == "age"] <- "age_at_exam"
+  
+  cohort <- merge(cohort,
+                  vbt[, c("age_at_exam", "sex", 
+                          "smoker", "mx")],
+                  by    = c("age_at_exam", "sex", "smoker"),
+                  all.x = TRUE)
+  
+  na_mx <- sum(is.na(cohort$mx))
+  if (na_mx > 0) {
+    stop("assign_financials(): ", na_mx,
+         " participants have no VBT rate after join.")
+  }
+  
+  cohort$annual_premium <- budget
+  
+  cohort$face_amount <- round(
+    budget / (cohort$mx * cohort$multiplier * loading)
+  )
+  
+  cohort$nar <- cohort$face_amount
+  
+  cohort
+}
+
+
+# reinsurance split
+# Splits each policy into retained and ceded components.
+#
+# The insurer retains the first retention_limit of each
+# policy. Anything above is ceded to the reinsurer.
+#
+# retention_limit: maximum NAR the insurer keeps per policy
+# Default $500,000 — typical for a small-medium insurer.
+#
+# Ceded premium is proportional to ceded NAR:
+#   ceded_premium = annual_premium * (ceded_nar / nar)
+#
+# The reinsurer charges a treaty rate on ceded NAR.
+# Default treaty_rate = mx * multiplier * loading
+# (same basis as original pricing — treaty at par).
+
+reinsurance_split <- function(cohort,
+                              retention_limit = 500000,
+                              treaty_loading  = 1.10) {
+  
+  cohort$retained_nar <- pmin(cohort$nar, 
+                              retention_limit)
+  cohort$ceded_nar    <- pmax(cohort$nar - 
+                                retention_limit, 0)
+  
+  cohort$cession_rate <- cohort$ceded_nar / cohort$nar
+  
+  cohort$retained_premium <- cohort$annual_premium * 
+    (1 - cohort$cession_rate)
+  cohort$ceded_premium    <- cohort$annual_premium * 
+    cohort$cession_rate
+  
+  cohort$treaty_premium   <- cohort$ceded_nar * 
+    cohort$mx * 
+    cohort$multiplier * 
+    treaty_loading
+  
+  cohort
+}
+
+# compute repricing
+# Computes new risk multipliers from experience study A/E.
+#
+# Credibility-weighted repricing:
+#   new_mult = old_mult × (w × AE + (1 - w) × 1.0)
+#
+# Credibility weight w = min(A / credibility_threshold, 1)
+# credibility_threshold = 1082 (standard actuarial full
+# credibility for Poisson counts at 95%/5% precision)
+#
+# When A is small, w is low and the new multiplier stays
+# close to the old one. When A is large (full credibility),
+# the new multiplier fully reflects observed A/E.
+
+
+compute_repricing <- function(study,
+                              cohort,
+                              credibility_threshold = 1082) {
+  
+  results <- study$results
+  
+  risk_mult <- unique(
+    cohort[, c("risk_class", "multiplier")]
+  )
+  
+  repricing <- merge(
+    results,
+    risk_mult,
+    by    = "risk_class",
+    all.x = TRUE
+  )
+  
+  repricing$credibility <- pmin(
+    repricing$A / credibility_threshold, 1.0
+  )
+  
+  repricing$new_multiplier <- round(
+    repricing$multiplier * (
+      repricing$credibility       * repricing$ae +
+        (1 - repricing$credibility) * 1.0
+    ), 2
+  )
+  
+  repricing$premium_change_pct <- round(
+    (repricing$new_multiplier / repricing$multiplier - 1)
+    * 100, 1
+  )
+  
+  repricing[, c("risk_class", "A", "E", "ae",
+                "multiplier", "credibility",
+                "new_multiplier", "premium_change_pct")]
 }
