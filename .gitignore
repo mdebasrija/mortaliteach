@@ -6,3 +6,4 @@ data/insurance.csv
 data/insurance.xls
 data/*.xls
 data/*.xlsx
+data/*.rds

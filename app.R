@@ -33,6 +33,24 @@ glm_model1 <- glm(
   family = Gamma(link = "log")
 )
 
+# load pre-computed NHANES data
+if (file.exists("data/cohort.rds")) {
+  cohort    <- readRDS("data/cohort.rds")
+  exp_basis <- readRDS("data/exp_basis.rds")
+  study_rc  <- readRDS("data/study_rc.rds")
+  repricing <- readRDS("data/repricing.rds")
+} else {
+  cohort    <- load_cohort()
+  cohort    <- assign_risk_class(cohort)
+  cohort    <- assign_financials(cohort)
+  cohort    <- reinsurance_split(cohort)
+  exposure  <- build_exposure(cohort)
+  exp_basis <- attach_basis(exposure, cohort)
+  study_rc  <- run_study(exp_basis,
+                         group_by = "risk_class")
+  repricing <- compute_repricing(study_rc, cohort)
+}
+
 personas <- data.frame(
   name           = c("Elena", "Damon",
                      "Caroline", "Niklaus"),
@@ -61,7 +79,7 @@ study_rc  <- run_study(exp_basis,
                        group_by = "risk_class")
 repricing <- compute_repricing(study_rc, cohort)
 
-# ── ui ────────────────────────────────────────────────────
+# ui
 ui <- page_navbar(
   title = "MortaliTeach",
   theme = bs_theme(
@@ -91,7 +109,7 @@ ui <- page_navbar(
   )
 )
 
-# ── server ────────────────────────────────────────────────
+# server
 server <- function(input, output, session) {
   
   act1_server("act1",
