@@ -102,7 +102,7 @@ structure. Four groups are now visible:
 - Non-smoker + non-obese: bottom band, tight and predictable
 
 Smoking is the dominant signal. Obesity is secondary but 
-real — it creates the middle band that was unexplained.
+real-it creates the middle band that was unexplained.
 
 ### The four groups
 
@@ -403,3 +403,426 @@ The GLM's predictions are based on average effects across all 1,338 people. Indi
 
 In a real experience study, we would aggregate these individual A/E ratios across thousands of people. The individual noise averages out. What remains is the signal showing whether the risk class was priced correctly on average.
 
+The A/E ratios we got were per person, but for a proper actuarial study, one would scale up to many more individuals, follow them over a period of time and see how they fare over this period. To scale this up, I went for a modular approach that separates the analysis functions to make them testable in silo. This is the analytics engine that will come in this iteration.
+
+## Part 2 - Analytics engine
+
+### Scope
+
+Functions to build:
+- `validate_cohort()` - hard failures on bad input data
+- `.load_nhanes()` - download and clean NHANES data
+- `load_cohort()` - public wrapper around `.load_nhanes()` (validates the cohort)
+- `build_exposure()` - expand cohort to person-year rows, needed format for the study
+- `attach_basis()` - join VBT mortality rates to exposure
+- `run_study()` - compute A/E
+
+For this, I used the NHANES data.
+
+### Dataset decision-why continuous NHANES 1999-2004
+
+Used NHANES 1999-2004 (three waves combined).
+
+```
+Wave 1: ~5,000 adults, examined 1999-2000, up to 20yr follow-up
+Wave 2: ~5,400 adults, examined 2001-2002, up to 18yr follow-up  
+Wave 3: ~5,000 adults, examined 2003-2004, up to 16yr follow-up
+```
+
+**Why continuous NHANES 1999-2004:**
+- nhanesA handles data retrieval cleanly - age, sex, smoking all 
+  available through one function call
+- Mortality linkage files parse correctly with the CDC fixed-width format recommended
+- Three waves give ~15,000 eligible adults with 16-20 years of follow-up-enough deaths for credible A/E ratios
+
+**Tradeoffs:**
+- Basis mismatch: observed cohort 1999-2004 vs VBT 2015 expected rates-expected to show A/E near 1.0 or slight improvement due to mortality trends. However, this can be used to show if the basis is adequate.
+- This mismatch is itself a teaching moment-the 
+  experience study reveals whether the basis is adequate
+
+### Why three waves specifically
+
+Adding waves beyond 2003-2004 introduces changing smoking 
+prevalence and mortality trends that complicate the teaching 
+narrative without adding proportionate value.
+
+### Data structure-two files per wave
+
+The CDC splits participant information across two sources:
+
+**Survey file** (nhanesA package):
+- DEMO has SEQN, RIDAGEYR (age in years), RIAGENDR (sex)
+- SMQ has SEQN, SMQ020 (ever smoked 100 cigarettes)
+
+**Mortality linkage file** (CDC fixed-width - three files 1999-00, 2001-02, 2003-04):
+- SEQN, eligstat, mortstat, permth_exm (follow-up months)
+
+Joined on SEQN. Neither file is complete alone.
+
+### SMQ020 missingness investigation
+
+After joining DEMO to SMQ for 1999-2000 wave:
+- 4,517 non-adults (age < 18): no SMQ020 - expected, smoking questionnaire not administered to children
+- 4,877 adults: have SMQ020 
+- 571 adults: missing SMQ020
+
+Of the 571 missing adults:
+- 37 interviewed only, never examined, and so will not appear 
+  in mortality linkage file, drop out on join
+- 534 examined but no smoking status: almost entirely 
+  age 18-19, likely questionnaire age threshold issue
+
+**Decision: exclude all participants with missing SMQ020.**
+No imputation as the smoker-distinct analysis requires known 
+smoking status for every participant.
+
+**Additional filter:** keep only examined participants
+(RIDSTATR == "Both Interviewed and MEC examined") to 
+ensure presence in mortality linkage file.
+
+### validate_cohort() design and tests
+
+Hard failures on six conditions. Returns df invisibly 
+if all pass, stops with precise error message if any fail.
+
+### Package dependencies-analytics.R
+
+data.table requires library() for the [ operator-
+cannot be fully namespaced. One library() call at 
+top of file. All other packages use explicit :: 
+namespacing throughout.
+
+Known technical debt: library(data.table) will be 
+replaced with @import data.table in roxygen comments 
+when converting to golem package in Iteration 4.
+
+Dependencies:
+- data.table: exposure frame construction, keyed joins
+- readr: fixed-width mortality file parsing  
+- nhanesA: NHANES survey data download
+- dplyr: cohort cleaning
+- tidyr: unnest in profiling version only
+
+```{r validate_cohort_tests}
+source("R/analytics.R")
+
+good <- data.frame(
+  seqn            = 1L,
+  age_at_exam     = 52L,
+  sex             = "Male",
+  smoker          = "non_smoker",
+  vital_status    = 1L,
+  follow_up_years = 8.7,
+  stringsAsFactors = FALSE
+)
+
+validate_cohort(good)                    # passes silently
+
+bad_age <- good; bad_age$age_at_exam <- 150L
+tryCatch(validate_cohort(bad_age), 
+         error = function(e) message(e$message))
+
+bad_vs <- good; bad_vs$vital_status <- 9L
+tryCatch(validate_cohort(bad_vs),  
+         error = function(e) message(e$message))
+
+bad_sex <- good; bad_sex$sex <- "M"
+tryCatch(validate_cohort(bad_sex), 
+         error = function(e) message(e$message))
+
+bad_fu <- good; bad_fu$follow_up_years <- -1
+tryCatch(validate_cohort(bad_fu),  
+         error = function(e) message(e$message))
+
+bad_na <- good; bad_na$age_at_exam <- NA
+tryCatch(validate_cohort(bad_na),  
+         error = function(e) message(e$message))
+
+bad_smoker <- good; bad_smoker$smoker <- "yes"
+tryCatch(validate_cohort(bad_smoker),
+         error = function(e) message(e$message))
+```
+
+All six checks pass. Function complete.
+
+### Why each check exists
+
+**Missing columns:** downstream functions use column names 
+directly-a missing column produces a cryptic error six 
+functions deep. Better to fail at the door with a clear 
+message.
+
+**NAs in required columns:** NA in age_at_exam would 
+produce NA rows in the exposure frame. NA in vital_status 
+would corrupt the death count. NA in follow_up_years would 
+produce NA exposure. All silent corruptions.
+
+**Age 18-85:** NHANES exam ages cap at 85 in practice.
+Maximum attained age during follow-up is 104.5 years -
+the VBT 2015 covers this (goes to age 120). The 85 limit
+applies at entry only, not during follow-up.
+
+**follow_up_years > 0:** Zero or negative follow-up 
+produces zero or negative exposure rows. The conservation 
+law test would still pass but the person contributes 
+nothing to the study-they should not be in the cohort.
+
+**vital_status in {0,1}:** Any other value means the 
+linkage failed or the data was corrupted. 2, 7, 9 are 
+common NHANES codes for refused/unknown-these must 
+never be silently treated as alive or dead.
+
+**sex in {Male, Female}:** attach_basis() joins on sex 
+to get the correct VBT rate. Any other value produces 
+NA ref_rate for that participant-the silent NA 
+corruption that must never reach run_study().
+
+### Cohort summary-load_cohort() output
+
+```
+14,170 participants-three waves combined
+Female: 7,458 (52.6%)
+Male:   6,712 (47.4%)
+Non-smoker: 7,295 (51.5%)
+Smoker:     6,875 (48.5%)
+Deaths: 4,087 (28.8%)
+Age at exam: median 48, range 20-85
+Follow-up: median 16.8 years, max 20.75 years
+```
+
+We observed that out of the eligible ones, 48.5% are smokers. This is high compared to the ~20% in insurance.csv. This reflects two things, that NHANES 1999-2004 had higher smoking prevalence than current rates, and "ever smoked 100 cigarettes" includes former smokers who may have quit. Former smokers may have lower mortality than current smokers. The VBT smoker rates assume current smokers. This will likely push smoker A/E
+below 1.0.This will affect our A/E ratios and is worth documenting.
+
+
+### profvis results-build_exposure_loop
+
+Flame graph shows data.frame() as the dominant cost 
+(orange bar, second widest after the outer function).
+
+Root cause confirmed: constructing one data.frame per 
+participant inside the loop triggers 14,170 separate 
+memory allocations. Each allocation increases GC 
+pressure. The arithmetic (seq, rep, floor) is 
+essentially free by comparison.
+
+This is why dplyr rowwise() did not fix the problem-
+it also allocates per-row intermediates, just with 
+cleaner syntax hiding the cost.
+
+data.table fixes the root cause: rep() replicates the 
+entire table in one allocation, then := mutates in-place 
+with no copying. Zero per-row allocations.
+
+Timings on 14,170 NHANES participants:
+
+- Loop:        4.76s
+- dplyr:       2.10s  
+- data.table:  0.027s
+- Speedup:     176x (loop), 78x (dplyr)
+
+
+### build_exposure()-conservation law results
+
+Verified on all three implementations against 14,170 
+NHANES participants:
+
+**Conservation law 1-exposure totals:**
+sum(exposure$exposure_yrs) == sum(cohort$follow_up_years)
+Loop, dplyr, and data.table all equal. Pass.
+
+**Conservation law 2-death totals:**
+sum(exposure$died) == sum(cohort$vital_status) == 4,087
+All three equal. Pass.
+
+All three implementations produce identical results.
+Performance difference is purely allocations, not 
+correctness. So now we know that the code is not logically incorrect - these approaches all do the same thing, in different ways, at different efficiencies. 
+The data.table approach is the correct one here. It is great in terms of parallelization, as we saw, it sped things up massively. The speedup 
+comes from eliminating per-row memory allocation - 
+not from parallelisation. The loop creates 14,170 
+separate data frame objects triggering repeated GC. 
+data.table creates one object and mutates in-place 
+with := - zero copies, zero per-row allocation.
+
+data.table does use multiple threads for grouped 
+aggregations, which will benefit run_study(). But 
+the build_exposure() speedup is purely allocation 
+efficiency.
+
+### attach_basis() - first A/E results
+
+Overall A/E: 1.234 - actual mortality 23% above VBT 2015 
+expected.
+
+By smoker status:
+- Non-smoker A/E: 1.329
+- Smoker A/E:     1.175
+
+By sex:
+- Female A/E: 1.226
+- Male A/E:   1.241
+
+**Interpretation:** Overmortality is concentrated in 
+non-smokers and is symmetric across sexes. This is 
+consistent with a select vs ultimate population effect:
+
+VBT 2015 non-smoker rates are calibrated on insured 
+lives who passed underwriting - a healthier-than-average 
+population. NHANES non-smokers are general population 
+including people with poor health outcomes who would 
+not qualify for insurance.
+
+This is expected and is itself a teaching moment: 
+experience studies reveal basis mismatches. The VBT 
+is not wrong - it is calibrated for a different 
+population than NHANES. A real insurer would expect 
+A/E near 1.0 on their own book of insured lives.
+
+The 1.234 overall A/E will drive the repricing 
+discussion in Act 3 - the treaty needs renegotiation.
+
+
+### run_study() - results
+
+Four groups, all reliable (A >= 5):
+
+| Group | A | E | A/E | 95% CI |
+|---|---|---|---|---|
+| Female non-smoker | 1043 | 782 | 1.334 | 1.105–1.591 |
+| Female smoker | 834 | 749 | 1.114 | 0.902–1.356 |
+| Male non-smoker | 654 | 495 | 1.321 | 1.039–1.647 |
+| Male smoker | 1556 | 1286 | 1.210 | 1.038–1.399 |
+
+Three of four CIs entirely above 1.0 — overmortality 
+is statistically significant, not noise.
+
+Female smoker CI crosses 1.0 — cannot reject null 
+hypothesis of A/E = 1.0 for this group at 95% confidence.
+
+Non-smoker A/E consistently higher than smoker A/E 
+in both sexes — confirms select population effect. 
+VBT non-smoker rates calibrated on healthier insured 
+lives; NHANES non-smokers are general population.
+
+**Teaching narrative for Act 3:**
+The treaty was priced using VBT 2015 rates. Actual 
+mortality was 23% above expected overall. The Byar 
+CIs confirm this is a real signal. At treaty renewal, 
+the reinsurer will argue for higher multipliers — 
+especially for non-smoker groups where the basis 
+mismatch is largest.
+
+
+## Iteration 2 — Financial layer
+
+### Scope
+
+Functions to build:
+- `assign_risk_class()` — underwriting rules → risk class
+- `assign_financials()` — face amount, premium, NAR
+- `reinsurance_split()` — retained vs ceded by policy
+- `compute_repricing()` — new multipliers from A/E results
+
+### Adding BMI to the cohort
+
+The four-class risk system from Iteration 0 requires BMI
+to split smokers into Substandard and Substandard High.
+BMI is not in the mortality linkage file — it comes from
+the NHANES body measurements component (BMX table).
+
+Added to `.load_nhanes()`:
+- Wave 1: `BMX` → `BMXBMI`
+- Wave 2: `BMX_B` → `BMXBMI`
+- Wave 3: `BMX_C` → `BMXBMI`
+
+**Missingness check — wave 1 after existing filters:**
+- 4,435 adults with known smoking status
+- 68 missing BMI (1.5%)
+- Decision: exclude. No imputation — 1.5% loss is
+  acceptable and imputing BMI for risk classification
+  would introduce assumption-dependent risk classes.
+
+**Updated cohort after adding BMI:**
+- 13,675 participants (down from 14,170)
+- 495 dropped due to missing BMI across three waves
+- BMI range: 12.04 – 66.44, median 27.37
+- No NAs remaining
+
+Added BMI validation to `validate_cohort()`:
+- Column must be present
+- Values must be between 10 and 80
+- No NAs permitted
+
+### assign_risk_class() — design
+
+Rules derived from the Iteration 0 decision tree.
+The tree found: smoking first, then age for non-smokers,
+then BMI for smokers.
+
+```
+Non-smoker, age < 43   → Preferred Elite   (1.00x)
+Non-smoker, age >= 43  → Preferred         (1.25x)
+Smoker, BMI < 30       → Substandard       (2.33x)
+Smoker, BMI >= 30      → Substandard High  (3.25x)
+```
+
+Multipliers are relative to Preferred Elite baseline.
+Derived from the mx ratios between VBT risk groups,
+rounded to practical values.
+
+**Why these multipliers:**
+- Preferred to Preferred Elite: age split within
+  non-smokers. Older non-smokers cost 1.25x more
+  on average based on the leaf means from the tree
+  ($12,300 vs $5,399 = 2.28x health charges, but
+  mortality ratio is smaller — 1.25x reflects the
+  VBT age gradient not the health charge gradient).
+- Substandard to Preferred Elite: smoker non-obese
+  vs young non-smoker. mx ratio from VBT confirms
+  roughly 2.3x mortality loading for smokers.
+- Substandard High to Preferred Elite: smoker obese
+  vs young non-smoker. Additional BMI loading on top
+  of smoking brings this to 3.25x.
+
+```{r assign_risk_class}
+cohort <- assign_risk_class(cohort)
+table(cohort$risk_class)
+```
+
+### What the risk class distribution shows
+
+[fill in after running — paste table(cohort$risk_class) output]
+
+### Connection to personas
+
+The four NHANES risk classes map directly to the four
+personas from Iteration 0:
+
+| Persona | Age | Smoker | BMI | Risk class |
+|---|---|---|---|---|
+| Elena | 38 | No | 37.73 | Preferred Elite |
+| Damon | 59 | No | 24.70 | Preferred |
+| Caroline | 42 | Yes | 26.60 | Substandard |
+| Niklaus | 47 | Yes | 36.19 | Substandard High |
+
+The personas were selected to be typical representatives
+of each leaf in the decision tree. The NHANES cohort
+applies the same rules to 13,675 real participants.
+
+### Risk class distribution
+
+```
+Preferred Elite:  3,346 (24.5%)
+Preferred:        3,700 (27.1%)
+Substandard:      4,574 (33.4%)
+Substandard High: 2,055 (15.0%)
+```
+
+Substandard is the largest group (33.4%) reflecting 
+the high smoking prevalence in the 1999-2004 cohort. 
+Preferred Elite is the smallest non-Substandard group 
+- only non-smokers under 43 qualify.
+
+Spot checks confirmed:
+- Non-smoker age 38 - Preferred Elite 
+- Smoker age 47, BMI >= 30 - Substandard High 

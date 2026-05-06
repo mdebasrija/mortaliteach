@@ -436,3 +436,46 @@ summary.experience_study <- function(object, ...) {
       nrow(object$results), "\n")
   invisible(object)
 }
+
+
+# assign risk class
+# Assigns underwriting risk class to each cohort participant.
+# Rules derived from decision tree in Iteration 0:
+#
+#   Non-smoker, age < 43           → Preferred Elite
+#   Non-smoker, age >= 43          → Preferred
+#   Smoker, BMI < 30               → Substandard
+#   Smoker, BMI >= 30              → Substandard High
+#
+# Multipliers relative to Preferred Elite (1.0x):
+#   Preferred:        1.25x
+#   Substandard:      2.33x
+#   Substandard High: 3.25x
+
+assign_risk_class <- function(cohort) {
+  
+  multipliers <- c(
+    "Preferred Elite" = 1.00,
+    "Preferred"       = 1.25,
+    "Substandard"     = 2.33,
+    "Substandard High"= 3.25
+  )
+  
+  cohort$risk_class <- with(cohort, ifelse(
+    smoker == "non_smoker" & age_at_exam < 43,
+    "Preferred Elite",
+    ifelse(
+      smoker == "non_smoker" & age_at_exam >= 43,
+      "Preferred",
+      ifelse(
+        smoker == "smoker" & bmi < 30,
+        "Substandard",
+        "Substandard High"
+      )
+    )
+  ))
+  
+  cohort$multiplier <- multipliers[cohort$risk_class]
+  
+  cohort
+}
